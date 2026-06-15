@@ -34,6 +34,7 @@
                             const match = setCookieHeader.match(/sb_csrftoken=([^;]+)/);
                             if (match && match[1]) {
                                 resolve(match[1]);
+                                console.log(match);
                             } else {
                                 reject(new Error('sb_csrftoken not found in Set-Cookie header'));
                             }
