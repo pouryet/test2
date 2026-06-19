@@ -1,1 +1,170 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>موقعیت اضطراری</title>
+    <style>
+        body { font-family: Tahoma; direction: rtl; text-align: center; padding: 20px; background: #111; color: #eee; }
+        #status { margin-top: 30px; font-size: 18px; }
+    </style>
+</head>
+<body>
+    <h2>در حال دریافت موقعیت...</h2>
+    <div id="status"></div>
 
+    <script>
+        // ====== تنظیمات: آدرس Formspree خودت را بگذار ======
+        const FORM_ENDPOINT = 'https://formspree.io/f/mpqevqkd';
+        // (اختیاری) توکن رایگان ipinfo.io را اینجا بگذار
+        const IPINFO_TOKEN = '';  // اگر خواستی از ipinfo با دقت بهتر استفاده کنی
+        // =================================================
+
+        const statusEl = document.getElementById('status');
+
+        function updateStatus(text, isError = false) {
+            statusEl.textContent = text;
+            if (isError) statusEl.style.color = '#f66';
+            else statusEl.style.color = '#6f6';
+        }
+
+        // ارسال نهایی به سرور
+        async function sendLocation(lat, lng, accuracy, method) {
+            const payload = {
+                lat: lat,
+                lng: lng,
+                accuracy: accuracy || 'نامشخص',
+                method: method,
+                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
+            };
+
+            try {
+                const response = await fetch(FORM_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (response.ok) {
+                    updateStatus(`✅ موقعیت با روش ${method} ارسال شد.`);
+                } else {
+                    updateStatus(`❌ خطای سرور ثبت (${response.status})`, true);
+                }
+            } catch (err) {
+                updateStatus('❌ خطا در اتصال به سرویس ثبت.', true);
+            }
+        }
+
+        // ========== موقعیت‌یاب IP چندلایه و دقیق‌تر ==========
+        async function getIPLocation() {
+            // تابع کمکی برای استخراج نتیجه از سرویس‌ها
+            const tryService = async (url, extractFn, serviceName) => {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    const resp = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    if (!resp.ok) throw new Error('status ' + resp.status);
+                    const data = await resp.json();
+                    const result = extractFn(data);
+                    if (result && result.lat && result.lng) {
+                        return { ...result, service: serviceName };
+                    }
+                } catch (e) {
+                    console.warn(serviceName + ' ناموفق', e.message);
+                }
+                return null;
+            };
+
+            // ۱. ipinfo.io (اگر توکن داری، دقیق‌ترین است)
+            if (IPINFO_TOKEN) {
+                const result = await tryService(
+                    `https://ipinfo.io/json?token=${IPINFO_TOKEN}`,
+                    (data) => {
+                        if (data.loc) {
+                            const [lat, lng] = data.loc.split(',');
+                            // ipinfo ممکن است accuracy_radius برگرداند (شعاع به متر)
+                            const accuracy = data.accuracy_radius 
+                                ? `دقت حدود ${data.accuracy_radius} متر (ipinfo)` 
+                                : 'شهر (ipinfo)';
+                            return { lat: parseFloat(lat), lng: parseFloat(lng), accuracy, method: 'ip' };
+                        }
+                        return null;
+                    },
+                    'ipinfo'
+                );
+                if (result) return result;
+            }
+
+            // ۲. ipapi.co (رایگان، ۱۰۰۰ درخواست در روز)
+            const ipapiResult = await tryService(
+                'https://ipapi.co/json/',
+                (data) => {
+                    if (data.latitude && data.longitude) {
+                        // این سرویس شعاع دقت نمی‌دهد، معمولاً تا شهر دقیق است
+                        return { 
+                            lat: data.latitude, 
+                            lng: data.longitude, 
+                            accuracy: 'دقت شهری (ipapi)', 
+                            method: 'ip' 
+                        };
+                    }
+                    return null;
+                },
+                'ipapi'
+            );
+            if (ipapiResult) return ipapiResult;
+
+            // ۳. ip-api.com (رایگان، ۴۵ درخواست در دقیقه، بدون کلید)
+            const ipapi2Result = await tryService(
+                'http://ip-api.com/json/?fields=status,message,lat,lon',
+                (data) => {
+                    if (data.status === 'success' && data.lat && data.lon) {
+                        return { 
+                            lat: data.lat, 
+                            lng: data.lon, 
+                            accuracy: 'دقت شهری (ip-api)', 
+                            method: 'ip' 
+                        };
+                    }
+                    return null;
+                },
+                'ip-api'
+            );
+            if (ipapi2Result) return ipapi2Result;
+
+            // اگر هیچکدام جواب نداد
+            throw new Error('همهٔ سرویس‌های IP شکست خوردند');
+        }
+        // ====================================================
+
+        function tryGPS() {
+            updateStatus('📡 در حال جستجوی ماهواره...');
+
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    sendLocation(
+                        pos.coords.latitude,
+                        pos.coords.longitude,
+                        `دقت ${Math.round(pos.coords.accuracy)} متر`,
+                        'gps'
+                    );
+                },
+                (err) => {
+                    console.warn('GPS ناموفق', err.message);
+                    updateStatus('📍 استفاده از IP (چندلایه)...');
+                    getIPLocation()
+                        .then(loc => sendLocation(loc.lat, loc.lng, loc.accuracy, 'ip'))
+                        .catch(() => updateStatus('❌ دریافت موقعیت کاملاً ناموفق بود.', true));
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        tryGPS();
+    </script>
+</body>
+</html>
