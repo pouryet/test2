@@ -68,10 +68,6 @@
         async function getMultipleIPs() {
             // سرویس‌هایی که IP را برمی‌گردانند (ترکیبی از plain text و JSON)
             const services = [
-                { url: 'https://api.ipify.org?format=json', extract: (data) => data.ip },
-                { url: 'https://api64.ipify.org?format=json', extract: (data) => data.ip }, // IPv6
-                { url: 'https://ifconfig.me/ip', extract: (text) => text.trim() },
-                { url: 'https://icanhazip.com', extract: (text) => text.trim() },
                 { url: 'https://checkip.amazonaws.com', extract: (text) => text.trim() },
                 { url: 'https://api.ip.sb/geoip', extract: (data) => data.ip }, // JSON
             ];
